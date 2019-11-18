@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Compare</title>
+</head>
+<body>
+<style>
+.outer {
+  display: flex;
+  width: 700px;
+  margin: 0 auto;
+}
+.contrast {
+  width: 260px;
+}
+
+.contrast.left {
+  text-align: right;
+}
+.center {
+  width: 180px;
+  text-align: center;
+}
+.upload {
+  height: 23px;
+  padding: 10px 0;
+}
+.gray, .binary {
+  height: 50px;
+  line-height: 50px;
+  padding: 10px 0;
+}
+.threshold {
+  height: 20px;
+  line-height: 20px;
+  padding: 10px 0;
+}
+.histogram {
+  height: 100px;
+  line-height: 100px;
+  padding: 10px 0;
+}
+</style>
+<div class="outer">
+  <div class="contrast left">
+    <div class="upload">
+      <input type="file" dir="rtl" class="pic">
+    </div>
+    <div class="gray">
+      <img class="gray-img" height="50" alt="">
+    </div>
+    <div class="threshold thresholdText"></div>
+    <div class="binary">
+      <img class="binary-img" height="50" alt="">
+    </div>
+    <div class="histogram">
+      <img class="histogram-img" height="100" alt="">
+    </div>
+  </div>
+  <div class="contrast center">
+    <div class="upload">
+      <button id="compareHandler" disabled>比较</button>
+      <span id="compareText" style="display: none">相似度</span>
+    </div>
+    <div class="gray">灰度图</div>
+    <div class="threshold">阈值</div>
+    <div class="binary">二值化</div>
+    <div class="histogram">直方图</div>
+  </div>
+  <div class="contrast ">
+    <div class="gray">
+      <img class="gray-img" height="50" alt="">
+    </div>
+    <div class="threshold thresholdText"></div>
+    <div class="binary">
+      <img class="binary-img" height="50" alt="">
+    </div>
+    <div class="histogram">
+      <img class="histogram-img" height="100"  alt="">
+    </div>
+  </div>
+</div>
+
+<script>
+
+  function initData () {
+
+           var xhr = new XMLHttpRequest();
+           
+           var url = '/source';
+           var method = "GET"
+           xhr.open(method,url);
+           
+           xhr.send(null);
+
+           xhr.onreadystatechange = function(){
+               if(xhr.state == 4){
+                   if(xhr.status == 200 || xhr.status == 304){
+                     alert(xhr.responseText);
+                   }
+               }
+           }
+           //2.取消 a 节点的默认行为
+           return false;
+
+  }
+  initData()
+const files = []
+const canvas = document.createElement('canvas')
+const context = canvas.getContext('2d')
+const grayImages = document.querySelectorAll('.gray-img')
+const binaryImages = document.querySelectorAll('.binary-img')
+const histogramImages = document.querySelectorAll('.histogram-img')
+
+
+// 缩小到50x50
+function toZoom(file, index) {
+  canvas.width = 50
+  canvas.height = 50
+
+  const img = new Image
+  img.src = URL.createObjectURL(file)
+  return new Promise(resolve => {
+    img.onload = function () {
+      context.drawImage(this, 0, 0, this.width, this.height, 0, 0, 50, 50)
+
+      const imageData = context.getImageData(0, 0, 50, 50)
+      resolve(imageData)
+    }
+  })
+}
+
+// 灰度
+function toGray(imageData, index) {
+  const temp = []
+  const data = imageData.data
+  canvas.width = 50
+  canvas.height = 50
+
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = data[i] * .299 + data[i + 1] * .587 + data[i + 2] * .114 | 0
+    data[i] = data[i + 1] = data[i + 2] = gray
+    temp.push(gray)
+  }
+
+  context.putImageData(imageData, 0, 0)
+
+  canvas.toBlob(blob => {
+    grayImages[index].src = URL.createObjectURL(blob)
+  })
+
+  return temp
+}
+
+// 大津法
+function toOtsu(grayData, index) {
+  let histData = Array(256).fill(0)
+  let total = grayData.length
+
+  grayData.forEach(color => {
+    let h = 0xFF & color
+    histData[h]++
+  })
+
+  toHistogram(histData, index)
+
+  let sum = 0
+  for (let i = 0; i < 256; i++) {
+    sum += i * histData[i]
+  }
+
+  let sumB = 0
+  let wB = 0
+  let wF = 0
+  let varMax = 0
+  let threshold = 0
+
+  for (let t = 0; t < 256; t++) {
+    wB += histData[t]
+    if (wB === 0) continue
+    wF = total - wB
+    if (wF === 0) break
+
+    sumB += t * histData[t]
+
+    let mB = sumB / wB
+    let mF = (sum - sumB) / wF
+
+    let varBetween = wB * wF * (mB - mF) ** 2
+
+    if (varBetween > varMax) {
+      varMax = varBetween
+      threshold = t
+    }
+  }
+
+  thresholds[index].textContent = threshold
+  return threshold
+}
+
+// 二值化
+function toBinary(grayData, index) {
+  const threshold = toOtsu(grayData, index)
+  const imageData = context.createImageData(50, 50)
+  const data = imageData.data
+  const temp = []
+
+  grayData.forEach((v, i) => {
+    let gray = v > threshold ? 255 : 0
+    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = gray
+    data[i * 4 + 3] = 255
+    temp.push(gray > 0 ? 0 : 1)
+  })
+
+
+  canvas.width = 50
+  canvas.height = 50
+  context.putImageData(imageData, 0, 0)
+
+  canvas.toBlob(blob => {
+    binaryImages[index].src = URL.createObjectURL(blob)
+  })
+
+  return temp
+}
+
+// 直方图
+function toHistogram(histData, index) {
+  const max = Math.max(...histData)
+
+  canvas.width = 256
+  canvas.height = 100
+
+  const rate = 100 / max
+
+  context.save()
+  context.strokeStyle = ''
+  context.translate(0.5, 100)
+  context.moveTo(0, 0)
+  context.lineTo(256, 0)
+  for (let i = 0; i < 256; i++) {
+    const value = histData[i] * rate | 0
+    context.moveTo(i, 0)
+    context.lineTo(i, -value)
+  }
+  context.stroke()
+  context.restore()
+
+  canvas.toBlob(blob => {
+    histogramImages[index].src = URL.createObjectURL(blob)
+  })
+}
+
+const inputs = document.querySelectorAll('input[type=file]')
+const compareHandler = document.querySelector('#compareHandler')
+const compareText = document.querySelector('#compareText')
+const thresholds = document.querySelectorAll('.thresholdText')
+
+async function onCompare() {
+  if (!files[0] || !files[1]) return
+
+  compareHandler.style.display = 'none'
+  const compareArray = []
+
+  for (let [index, file] of files.entries()) {
+    const imageData = await toZoom(file, index)
+    const grayData = toGray(imageData, index)
+    const data = toBinary(grayData, index)
+    compareArray[index] = data
+  }
+
+  let count = 0
+  const total = compareArray[0].length
+  for (let i = 0; i < total; i++) {
+    count += +!(compareArray[0][i] ^ compareArray[1][i])
+  }
+  compareText.textContent = '相似度：' + (count / total * 100).toLocaleString() + '%'
+  compareText.style.display = 'block'
+}
+
+inputs.forEach((input, index) => {
+  input.addEventListener('change', e => {
+    files[index] = e.target.files[0]
+
+    if (!files[0] || !files[1]) {
+      compareHandler.disabled = false
+
+    }
+    compareHandler.style.cssText = ''
+    compareText.style.display = 'none'
+  }, false)
+})
+
+compareHandler.addEventListener('click', onCompare, false)
+
+let pic = document.querySelector('.pic')
+pic.addEventListener('change', function (e) {
+  const file = e.target.files[0]
+  if (!file) return
+
+  $(function(){
+			$.ajax({
+				type : 'POST',
+				url: '/compare',
+				dataType: 'json',
+				success: function(json){
+          alert('1')
+					console.log(json);
+        },
+        error: function (err) {
+          alert(err.message)
+        }
+			})
+		})
+
+}, false)
+
+
+
+</script>
+</body>
+</html>
